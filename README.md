@@ -162,8 +162,6 @@ C2inaBox/
 │   └── profile.example.yaml  # Adaptix teamserver config template
 ├── deploy.ps1                # One-command deploy
 ├── docker-compose.yml        # Unified stack definition
-├── docs/
-│   └── banner.png            # Repo banner (placeholder)
 ├── status.ps1                # Health check
 └── teardown.ps1              # Clean shutdown
 ```
