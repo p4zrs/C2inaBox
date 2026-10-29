@@ -53,29 +53,29 @@ First run builds Adaptix from source (~5 min). Subsequent deploys reuse cached a
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     Host Machine                        │
-│                                                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  Adaptix C2  │  │Elasticsearch │  │    Kibana    │  │
-│  │  Teamserver  │  │  (single)    │  │              │  │
-│  │              │  │              │  │              │  │
-│  │ wss://:4321  │  │ http://:9200 │  │ http://:5601 │  │
-│  │ network:host │  │              │  │              │  │
-│  └──────────────┘  └──────┬───────┘  └──────┬───────┘  │
-│         │                 │                  │          │
-│         ▼                 └──────────────────┘          │
-│    Beacon Agent                                         │
-│    (runs on host)          Telemetry Pipeline            │
-│                           (Sysmon → Elastic)            │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                      Host Machine                        │
+│                                                          │
+│  ┌───────────────────┐  ┌─────────────┐  ┌───────────┐  │
+│  │    Adaptix C2     │  │Elasticsearch│  │  Kibana   │  │
+│  │                   │  │  (single)   │  │           │  │
+│  │ API    :4321      │  │             │  │           │  │
+│  │ HTTPS  :8443 ◄──┐│  │ http://:9200│  │http://:5601  │
+│  │ HTTP   :80/:443  ││  │             │  │           │  │
+│  └───────────────────┘  └──────┬──────┘  └─────┬─────┘  │
+│         ▲               │      │               │         │
+│         │               │      └───────────────┘         │
+│    Beacon Agent         │     Telemetry Pipeline         │
+│    (runs on host)       │    (Sysmon → Elastic)          │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### Services
 
 | Service | Default Endpoint | Container | Notes |
 |---------|-----------------|-----------|-------|
-| Adaptix C2 | `wss://localhost:4321` | `c2inabox-adaptix` | `network_mode: host` — listeners bind any port |
+| Adaptix C2 | `https://localhost:4321/endpoint` | `c2inabox-adaptix` | Teamserver API + client |
+| HTTPS Listener | `https://localhost:8443` | `c2inabox-adaptix` | Auto-created BeaconHTTP |
 | Elasticsearch | `http://localhost:9200` | `c2inabox-elasticsearch` | Single-node, security disabled |
 | Kibana | `http://localhost:5601` | `c2inabox-kibana` | Detection dashboards |
 
@@ -102,8 +102,14 @@ Teamserver configuration: password, operators, listeners, TLS settings. See [Ada
 ### Deploy & Manage
 
 ```powershell
-# Full stack (build + run)
+# Full stack — builds, starts, and creates the default HTTPS listener
 .\deploy.ps1
+
+# Full stack + generate a beacon payload to C:\Tools\Payloads
+.\deploy.ps1 -GeneratePayload
+
+# Custom payload directory
+.\deploy.ps1 -GeneratePayload -PayloadDir D:\Engagements\lab\payloads
 
 # Skip build (use cached artifacts)
 .\deploy.ps1 -SkipBuild
@@ -111,8 +117,15 @@ Teamserver configuration: password, operators, listeners, TLS settings. See [Ada
 # Force rebuild Adaptix
 .\deploy.ps1 -Force
 
+# Deploy without auto-creating the listener
+.\deploy.ps1 -NoListener
+
 # Elastic + Kibana only (no C2)
 .\deploy.ps1 -ElasticOnly
+
+# Create/recreate listener independently
+.\setup-listener.ps1
+.\setup-listener.ps1 -GeneratePayload -PayloadDir C:\Tools\Payloads
 
 # Check service health
 .\status.ps1
@@ -126,12 +139,13 @@ Teamserver configuration: password, operators, listeners, TLS settings. See [Ada
 
 ### Test a Payload
 
-1. **Deploy**: `.\deploy.ps1`
-2. **Connect**: Open the Adaptix client → `wss://localhost:4321`
-3. **Listener**: Create an HTTP listener in the Adaptix UI
-4. **Agent**: Generate a beacon agent and run it on the target host
-5. **Execute**: Run your payload/BOF through the beacon
-6. **Detect**: Check Kibana at `http://localhost:5601` for telemetry
+1. **Deploy**: `.\deploy.ps1 -GeneratePayload`
+2. **Run agent**: Execute the beacon from `C:\Tools\Payloads\`
+3. **Connect**: Open the Adaptix client → `https://localhost:4321/endpoint`
+4. **Execute**: Run your payload/BOF through the beacon
+5. **Detect**: Check Kibana at `http://localhost:5601` for telemetry
+
+> The default HTTPS listener is created automatically on port 8443. Use `-NoListener` to skip this.
 
 ### Docker Compose Profiles
 
@@ -160,8 +174,9 @@ C2inaBox/
 ├── SECURITY.md
 ├── config/
 │   └── profile.example.yaml  # Adaptix teamserver config template
-├── deploy.ps1                # One-command deploy
+├── deploy.ps1                # One-command deploy (build + run + listener)
 ├── docker-compose.yml        # Unified stack definition
+├── setup-listener.ps1        # Auto-create HTTPS listener + optional payload gen
 ├── status.ps1                # Health check
 └── teardown.ps1              # Clean shutdown
 ```

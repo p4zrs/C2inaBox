@@ -23,7 +23,12 @@ services:
       context: ${ADAPTIX_SRC:-./../AdaptixC2}
       target: runtime
     container_name: c2inabox-adaptix
-    network_mode: host
+    ports:
+      - "4321:4321"
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+      - "8443:8443"
     volumes:
       - adaptix-dist:/app-dist:ro
       - adaptix-data:/app/data

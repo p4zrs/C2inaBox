@@ -4,18 +4,28 @@
 .DESCRIPTION
     Builds the Adaptix C2 server from source (first run only), then starts
     the full stack: Adaptix teamserver, Elasticsearch, and Kibana.
+    Automatically creates the default HTTPS listener on port 8443.
 .PARAMETER SkipBuild
     Skip the Adaptix build step (use cached build artifacts).
 .PARAMETER ElasticOnly
     Start only Elasticsearch + Kibana, no Adaptix.
 .PARAMETER Force
     Force rebuild Adaptix even if artifacts exist.
+.PARAMETER NoListener
+    Skip automatic HTTPS listener creation.
+.PARAMETER GeneratePayload
+    Generate a default x64 beacon EXE after creating the listener.
+.PARAMETER PayloadDir
+    Directory for generated payloads. Defaults to C:\Tools\Payloads.
 #>
 [CmdletBinding()]
 param(
     [switch]$SkipBuild,
     [switch]$ElasticOnly,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$NoListener,
+    [switch]$GeneratePayload,
+    [string]$PayloadDir = "C:\Tools\Payloads"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -96,15 +106,49 @@ while ($elapsed -lt $timeout) {
     $elapsed += 3
 }
 
+# Wait for Adaptix to accept connections
+if (-not $ElasticOnly) {
+    Write-Host "[*] Waiting for Adaptix teamserver..." -ForegroundColor Yellow
+    $adaptixReady = $false
+    $adaptixTimeout = 60
+    $adaptixElapsed = 0
+    while ($adaptixElapsed -lt $adaptixTimeout) {
+        try {
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            $tcp.Connect("127.0.0.1", 4321)
+            $tcp.Close()
+            $adaptixReady = $true
+            break
+        } catch {}
+        Start-Sleep -Seconds 2
+        $adaptixElapsed += 2
+    }
+    if (-not $adaptixReady) {
+        Write-Host "[!] Adaptix did not become reachable within $adaptixTimeout seconds." -ForegroundColor Red
+    }
+}
+
 Write-Host ""
 Write-Host "[+] C2inaBox is running:" -ForegroundColor Green
-Write-Host "    Elasticsearch : http://localhost:$($env:ES_PORT ?? '9200')" -ForegroundColor White
-Write-Host "    Kibana        : http://localhost:$($env:KIBANA_PORT ?? '5601')" -ForegroundColor White
+$esPort = if ($env:ES_PORT) { $env:ES_PORT } else { '9200' }
+$kbPort = if ($env:KIBANA_PORT) { $env:KIBANA_PORT } else { '5601' }
+Write-Host "    Elasticsearch : http://localhost:$esPort" -ForegroundColor White
+Write-Host "    Kibana        : http://localhost:$kbPort" -ForegroundColor White
 if (-not $ElasticOnly) {
-    Write-Host "    Adaptix C2    : wss://localhost:4321" -ForegroundColor White
-    Write-Host "    Password      : (see config/profile.yaml)" -ForegroundColor DarkGray
+    Write-Host "    Adaptix C2    : https://localhost:4321/endpoint" -ForegroundColor White
+    Write-Host "    Listener      : https://localhost:8443" -ForegroundColor White
+    Write-Host "    Credentials   : (see config/profile.yaml)" -ForegroundColor DarkGray
 }
 Write-Host ""
+
+# Auto-create HTTPS listener
+if (-not $ElasticOnly -and -not $NoListener -and $adaptixReady) {
+    $listenerArgs = @{}
+    if ($GeneratePayload) { $listenerArgs["GeneratePayload"] = $true }
+    if ($PayloadDir) { $listenerArgs["PayloadDir"] = $PayloadDir }
+    & "$ScriptDir\setup-listener.ps1" @listenerArgs
+}
+
 Write-Host "[*] Use .\teardown.ps1 to stop everything." -ForegroundColor DarkGray
 
 Pop-Location
