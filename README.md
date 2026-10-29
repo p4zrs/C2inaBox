@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/banner.png" alt="C2inaBox" width="600">
-</p>
-
 <h1 align="center">C2inaBox</h1>
 
 <p align="center">
@@ -36,7 +32,7 @@ C2inaBox deploys [Adaptix C2](https://github.com/Adaptix-Framework/AdaptixC2), E
 
 ```powershell
 # 1. Clone this repo
-git clone https://github.com/youruser/C2inaBox.git
+git clone https://github.com/p4zrs/C2inaBox.git
 cd C2inaBox
 
 # 2. Clone Adaptix C2 source alongside it
