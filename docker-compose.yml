@@ -1,0 +1,108 @@
+name: c2inabox
+
+services:
+
+  # ── Adaptix C2: build server + extenders ─────────────────
+  adaptix-build:
+    profiles: ["build"]
+    build:
+      context: ${ADAPTIX_SRC:-./../AdaptixC2}
+      target: build-server-ext
+    container_name: c2inabox-adaptix-build
+    volumes:
+      - adaptix-dist:/server-dist
+    command: >-
+      sh -c "mkdir -p /server-dist &&
+             cp /app/dist/adaptixserver /app/dist/ssl_gen.sh /app/dist/404page.html /server-dist/ &&
+             cp -r /app/dist/extenders /server-dist/"
+
+  # ── Adaptix C2: runtime ──────────────────────────────────
+  adaptix:
+    profiles: ["run"]
+    build:
+      context: ${ADAPTIX_SRC:-./../AdaptixC2}
+      target: runtime
+    container_name: c2inabox-adaptix
+    network_mode: host
+    volumes:
+      - adaptix-dist:/app-dist:ro
+      - adaptix-data:/app/data
+      - ./config/profile.yaml:/app/profile.yaml:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        # Copy built artifacts into /app if not already there
+        if [ ! -f /app/adaptixserver ]; then
+          echo "[*] Copying built artifacts..."
+          cp /app-dist/adaptixserver /app/ 2>/dev/null || true
+          cp /app-dist/ssl_gen.sh /app/ 2>/dev/null || true
+          cp /app-dist/404page.html /app/ 2>/dev/null || true
+          cp -r /app-dist/extenders /app/ 2>/dev/null || true
+        fi
+        # Generate certs if missing
+        if [ ! -f /app/server.rsa.crt ] || [ ! -f /app/server.rsa.key ]; then
+          echo "[*] Generating self-signed certificates..."
+          openssl req -x509 -nodes -newkey rsa:2048 \
+            -keyout /app/server.rsa.key -out /app/server.rsa.crt \
+            -days 3650 -subj "/C=XX/ST=Lab/L=Lab/O=C2inaBox/CN=localhost"
+        fi
+        echo "[+] Starting Adaptix C2 Server..."
+        exec /app/adaptixserver -profile /app/profile.yaml
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+  # ── Elasticsearch ────────────────────────────────────────
+  elasticsearch:
+    profiles: ["run"]
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: c2inabox-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms${ES_HEAP:-1g} -Xmx${ES_HEAP:-1g}
+      - cluster.name=c2inabox
+    ports:
+      - "${ES_PORT:-9200}:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    deploy:
+      resources:
+        limits:
+          memory: ${ES_MEM_LIMIT:-3G}
+
+  # ── Kibana ───────────────────────────────────────────────
+  kibana:
+    profiles: ["run"]
+    image: docker.elastic.co/kibana/kibana:8.15.3
+    container_name: c2inabox-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
+    ports:
+      - "${KIBANA_PORT:-5601}:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+volumes:
+  adaptix-dist:
+    driver: local
+  adaptix-data:
+    driver: local
+  es-data:
+    driver: local

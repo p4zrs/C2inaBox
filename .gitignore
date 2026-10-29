@@ -1,0 +1,18 @@
+# Local config (never commit real credentials)
+.env
+config/profile.yaml
+
+# Docker build cache
+.docker/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
