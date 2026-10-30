@@ -68,8 +68,10 @@ services:
     container_name: c2inabox-elasticsearch
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false
+      - xpack.security.enabled=true
       - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-c2inabox-lab}
       - ES_JAVA_OPTS=-Xms${ES_HEAP:-1g} -Xmx${ES_HEAP:-1g}
       - cluster.name=c2inabox
     ports:
@@ -77,7 +79,7 @@ services:
     volumes:
       - es-data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf -u elastic:${ELASTIC_PASSWORD:-c2inabox-lab} http://localhost:9200/_cluster/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -86,6 +88,29 @@ services:
         limits:
           memory: ${ES_MEM_LIMIT:-3G}
 
+  # ── ES setup (one-shot: set built-in user passwords) ─────
+  es-setup:
+    profiles: ["run"]
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: c2inabox-es-setup
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-c2inabox-lab}
+      - KIBANA_SYSTEM_PASSWORD=${KIBANA_SYSTEM_PASSWORD:-c2inabox-lab}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "[*] Setting kibana_system password..."
+        curl -sf -X POST -u "elastic:$${ELASTIC_PASSWORD}" \
+          -H "Content-Type: application/json" \
+          http://elasticsearch:9200/_security/user/kibana_system/_password \
+          -d "{\"password\": \"$${KIBANA_SYSTEM_PASSWORD}\"}"
+        echo ""
+        echo "[+] Setup complete"
+    restart: "no"
+
   # ── Kibana ───────────────────────────────────────────────
   kibana:
     profiles: ["run"]
@@ -93,12 +118,45 @@ services:
     container_name: c2inabox-kibana
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-      - xpack.security.enabled=false
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_SYSTEM_PASSWORD:-c2inabox-lab}
+      - xpack.security.enabled=true
+      - xpack.fleet.agents.fleet_server.hosts=["http://fleet-server:8220"]
+      - xpack.fleet.outputs=[{id:"default-output",name:"default",type:"elasticsearch",hosts:["http://elasticsearch:9200"],is_default:true,is_default_monitoring:true}]
     ports:
       - "${KIBANA_PORT:-5601}:5601"
     depends_on:
       elasticsearch:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ── Fleet Server ─────────────────────────────────────────
+  fleet-server:
+    profiles: ["run"]
+    image: docker.elastic.co/beats/elastic-agent:8.15.3
+    container_name: c2inabox-fleet-server
+    environment:
+      - FLEET_SERVER_ENABLE=1
+      - FLEET_SERVER_HOST=0.0.0.0
+      - FLEET_SERVER_ELASTICSEARCH_HOST=http://elasticsearch:9200
+      - FLEET_SERVER_SERVICE_TOKEN=${FLEET_SERVICE_TOKEN}
+      - FLEET_SERVER_POLICY_ID=fleet-server-policy
+      - FLEET_URL=http://fleet-server:8220
+      - KIBANA_HOST=http://kibana:5601
+      - KIBANA_FLEET_SETUP=1
+      - KIBANA_FLEET_USERNAME=elastic
+      - KIBANA_FLEET_PASSWORD=${ELASTIC_PASSWORD:-c2inabox-lab}
+      - FLEET_SERVER_INSECURE_HTTP=true
+    ports:
+      - "${FLEET_PORT:-8220}:8220"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      es-setup:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
