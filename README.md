@@ -168,6 +168,8 @@ Teamserver configuration: password, operators, listeners, TLS settings. See [Ada
 | **Elastic Agent** | Host endpoint telemetry | Auto-enrolled to default-policy |
 | **Detection Rules** | 1266+ prebuilt rules | Windows + Endpoint subset enabled |
 
+> **Trial license (30 days, free).** Elasticsearch starts a trial license on first deploy to unlock Elastic Defend's behavioral, memory, and ransomware protections. After 30 days it reverts to Basic and those protections silently disable. To reset: `.\teardown.ps1 -Purge` then `.\deploy.ps1` — purging the ES data volume lets a fresh trial start automatically.
+
 ### Docker Compose Profiles
 
 | Profile | What it does |
