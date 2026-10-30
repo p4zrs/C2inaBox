@@ -209,6 +209,17 @@ services:
           sleep 10
         done
 
+        echo "[*] Enabling detection rules (Windows endpoint subset)..."
+        for TAG in "Windows" "Endpoint Security"; do
+          curl -sf -X POST -u "$$AUTH" \
+            -H "Content-Type: application/json" -H "kbn-xsrf: true" \
+            -H "elastic-api-version: 2023-10-31" \
+            "$$KIBANA_URL/api/detection_engine/rules/_bulk_action" \
+            -d "{\"query\":\"alert.attributes.tags: \\\"$$TAG\\\"\",\"action\":\"enable\"}" \
+            > /dev/null 2>&1 || true
+        done
+        echo "[+] Detection rules enabled"
+
         echo "[+] SIEM setup complete"
     restart: "no"
 
