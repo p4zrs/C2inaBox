@@ -121,6 +121,7 @@ services:
       - ELASTICSEARCH_USERNAME=kibana_system
       - ELASTICSEARCH_PASSWORD=${KIBANA_SYSTEM_PASSWORD:-c2inabox-lab}
       - xpack.security.enabled=true
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=c2inabox-lab-encryption-key-32chars!
       - xpack.fleet.agents.fleet_server.hosts=["http://fleet-server:8220"]
       - xpack.fleet.outputs=[{id:"default-output",name:"default",type:"elasticsearch",hosts:["http://elasticsearch:9200"],is_default:true,is_default_monitoring:true}]
     ports:
@@ -132,6 +133,84 @@ services:
       resources:
         limits:
           memory: 1G
+
+  # ── SIEM setup (one-shot: policies, Elastic Defend, detection rules)
+  siem-setup:
+    profiles: ["run"]
+    image: curlimages/curl:8.5.0
+    container_name: c2inabox-siem-setup
+    depends_on:
+      kibana:
+        condition: service_started
+      es-setup:
+        condition: service_completed_successfully
+    environment:
+      - KIBANA_URL=http://kibana:5601
+      - ES_USER=elastic
+      - ES_PASS=${ELASTIC_PASSWORD:-c2inabox-lab}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        AUTH="$${ES_USER}:$${ES_PASS}"
+
+        echo "[*] Waiting for Kibana API..."
+        until curl -sf -u "$$AUTH" "$$KIBANA_URL/api/status" > /dev/null 2>&1; do sleep 5; done
+        echo "[+] Kibana is up"
+
+        echo "[*] Creating Fleet Server policy..."
+        curl -sf -X POST -u "$$AUTH" \
+          -H "Content-Type: application/json" -H "kbn-xsrf: true" \
+          "$$KIBANA_URL/api/fleet/agent_policies" \
+          -d '{"id":"fleet-server-policy","name":"Fleet Server Policy","namespace":"default","has_fleet_server":true}' \
+          > /dev/null 2>&1 || true
+
+        echo "[*] Creating default agent policy..."
+        curl -sf -X POST -u "$$AUTH" \
+          -H "Content-Type: application/json" -H "kbn-xsrf: true" \
+          "$$KIBANA_URL/api/fleet/agent_policies" \
+          -d '{"id":"default-policy","name":"Default Policy","namespace":"default"}' \
+          > /dev/null 2>&1 || true
+
+        echo "[*] Installing Elastic Defend package..."
+        curl -sf -X POST -u "$$AUTH" \
+          -H "Content-Type: application/json" -H "kbn-xsrf: true" \
+          "$$KIBANA_URL/api/fleet/epm/packages/endpoint/8.15.2" \
+          > /dev/null 2>&1 || true
+
+        echo "[*] Adding Elastic Defend integration (Detect mode)..."
+        curl -sf -X POST -u "$$AUTH" \
+          -H "Content-Type: application/json" -H "kbn-xsrf: true" \
+          "$$KIBANA_URL/api/fleet/package_policies" \
+          -d '{
+            "name":"Elastic Defend",
+            "namespace":"default",
+            "policy_id":"default-policy",
+            "package":{"name":"endpoint","version":"8.15.2"},
+            "inputs":[{"type":"endpoint","enabled":true,"streams":[],
+              "config":{"policy":{"value":{"windows":{
+                "events":{"process":true,"network":true,"file":true,"registry":true,"security":true,"dll_and_driver_load":true,"dns":true},
+                "malware":{"mode":"detect"},"ransomware":{"mode":"detect"},
+                "memory_protection":{"mode":"detect"},"behavior_protection":{"mode":"detect"}
+              }}}}}]
+          }' > /dev/null 2>&1 || true
+
+        echo "[*] Installing prebuilt detection rules (retries up to 60s)..."
+        for i in 1 2 3 4 5 6; do
+          if curl -sf -X PUT -u "$$AUTH" \
+            -H "Content-Type: application/json" -H "kbn-xsrf: true" \
+            -H "elastic-api-version: 2023-10-31" \
+            "$$KIBANA_URL/api/detection_engine/rules/prepackaged" \
+            > /dev/null 2>&1; then
+            echo "[+] Prebuilt rules installed"
+            break
+          fi
+          echo "  Retry $$i..."
+          sleep 10
+        done
+
+        echo "[+] SIEM setup complete"
+    restart: "no"
 
   # ── Fleet Server ─────────────────────────────────────────
   fleet-server:
