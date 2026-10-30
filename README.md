@@ -76,8 +76,10 @@ First run builds Adaptix from source (~5 min). Subsequent deploys reuse cached a
 |---------|-----------------|-----------|-------|
 | Adaptix C2 | `https://localhost:4321/endpoint` | `c2inabox-adaptix` | Teamserver API + client |
 | HTTPS Listener | `https://localhost:8443` | `c2inabox-adaptix` | Auto-created BeaconHTTP |
-| Elasticsearch | `http://localhost:9200` | `c2inabox-elasticsearch` | Single-node, security disabled |
-| Kibana | `http://localhost:5601` | `c2inabox-kibana` | Detection dashboards |
+| Elasticsearch | `http://localhost:9200` | `c2inabox-elasticsearch` | Single-node, trial license |
+| Kibana | `http://localhost:5601` | `c2inabox-kibana` | Security + Fleet |
+| Fleet Server | `http://localhost:8220` | `c2inabox-fleet-server` | Agent management |
+| Elastic Agent | — | Runs on host | Enrolled via `enroll-agent.ps1` |
 
 ## Configuration
 
@@ -89,7 +91,11 @@ First run builds Adaptix from source (~5 min). Subsequent deploys reuse cached a
 | `ES_PORT` | `9200` | Elasticsearch port |
 | `ES_HEAP` | `1g` | Elasticsearch JVM heap |
 | `ES_MEM_LIMIT` | `3G` | Elasticsearch container memory limit |
+| `ELASTIC_PASSWORD` | `c2inabox-lab` | Elasticsearch `elastic` user password |
 | `KIBANA_PORT` | `5601` | Kibana port |
+| `KIBANA_SYSTEM_PASSWORD` | `c2inabox-lab` | Kibana system user password |
+| `FLEET_PORT` | `8220` | Fleet Server port |
+| `FLEET_SERVICE_TOKEN` | — | Fleet service token (see setup) |
 
 ### Adaptix Profile (`config/profile.yaml`)
 
@@ -102,7 +108,7 @@ Teamserver configuration: password, operators, listeners, TLS settings. See [Ada
 ### Deploy & Manage
 
 ```powershell
-# Full stack — builds, starts, and creates the default HTTPS listener
+# Full stack — builds, starts, creates listener, and enrolls Elastic Agent
 .\deploy.ps1
 
 # Full stack + generate a beacon payload to C:\Tools\Payloads
@@ -119,6 +125,9 @@ Teamserver configuration: password, operators, listeners, TLS settings. See [Ada
 
 # Deploy without auto-creating the listener
 .\deploy.ps1 -NoListener
+
+# Skip Elastic Agent enrollment
+.\deploy.ps1 -SkipEnroll
 
 # Elastic + Kibana only (no C2)
 .\deploy.ps1 -ElasticOnly
@@ -143,9 +152,21 @@ Teamserver configuration: password, operators, listeners, TLS settings. See [Ada
 2. **Run agent**: Execute the beacon from `C:\Tools\Payloads\`
 3. **Connect**: Open the Adaptix client → `https://localhost:4321/endpoint`
 4. **Execute**: Run your payload/BOF through the beacon
-5. **Detect**: Check Kibana at `http://localhost:5601` for telemetry
+5. **Detect**: Check Kibana → Security → Alerts at `http://localhost:5601`
 
 > The default HTTPS listener is created automatically on port 8443. Use `-NoListener` to skip this.
+
+### What Gets Auto-Deployed
+
+| Component | What | Auto-configured |
+|-----------|------|-----------------|
+| **Adaptix C2** | Teamserver + HTTPS listener on :8443 | Listener + TLS certs |
+| **Elasticsearch** | Single-node, trial license (30d) | Behavioral protections unlocked |
+| **Kibana** | Security app + Fleet | SIEM rules enabled |
+| **Elastic Defend** | Endpoint protection in Detect mode | Malware, behavior, memory, ransomware |
+| **Fleet Server** | Agent management | Service token + enrollment |
+| **Elastic Agent** | Host endpoint telemetry | Auto-enrolled to default-policy |
+| **Detection Rules** | 1266+ prebuilt rules | Windows + Endpoint subset enabled |
 
 ### Docker Compose Profiles
 
@@ -174,16 +195,20 @@ C2inaBox/
 ├── SECURITY.md
 ├── config/
 │   └── profile.example.yaml  # Adaptix teamserver config template
-├── deploy.ps1                # One-command deploy (build + run + listener)
+├── deploy.ps1                # One-command deploy (build + run + listener + agent)
 ├── docker-compose.yml        # Unified stack definition
+├── enroll-agent.ps1          # Download and enroll Elastic Agent on host
 ├── setup-listener.ps1        # Auto-create HTTPS listener + optional payload gen
+├── setup-siem.ps1            # Manual SIEM setup (detection rules, etc.)
 ├── status.ps1                # Health check
 └── teardown.ps1              # Clean shutdown
 ```
 
 ## Roadmap
 
-- [ ] Sysmon config + Winlogbeat/Elastic Agent ingest pipeline
+- [x] Elastic Agent auto-enrollment with Elastic Defend integration
+- [x] Trial license + behavioral/memory/malware protections in Detect mode
+- [x] 1266+ prebuilt detection rules auto-enabled
 - [ ] Pre-built Kibana dashboards for common detection signatures
 - [ ] Bash equivalents of PowerShell scripts for Linux/macOS hosts
 - [ ] Optional Caldera integration for adversary emulation plans

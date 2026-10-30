@@ -108,6 +108,15 @@ services:
           http://elasticsearch:9200/_security/user/kibana_system/_password \
           -d "{\"password\": \"$${KIBANA_SYSTEM_PASSWORD}\"}"
         echo ""
+
+        echo "[*] Enabling trial license (unlocks behavioral protections)..."
+        curl -sf -X POST -u "elastic:$${ELASTIC_PASSWORD}" \
+          -H "Content-Type: application/json" \
+          "http://elasticsearch:9200/_license/start_trial?acknowledge=true" \
+          > /dev/null 2>&1 || true
+        LICENSE=$(curl -sf -u "elastic:$${ELASTIC_PASSWORD}" http://elasticsearch:9200/_license | grep -o '"type":"[^"]*"' | head -1)
+        echo "[+] License: $$LICENSE"
+
         echo "[+] Setup complete"
     restart: "no"
 
@@ -189,11 +198,42 @@ services:
             "package":{"name":"endpoint","version":"8.15.2"},
             "inputs":[{"type":"endpoint","enabled":true,"streams":[],
               "config":{"policy":{"value":{"windows":{
-                "events":{"process":true,"network":true,"file":true,"registry":true,"security":true,"dll_and_driver_load":true,"dns":true},
-                "malware":{"mode":"detect"},"ransomware":{"mode":"detect"},
-                "memory_protection":{"mode":"detect"},"behavior_protection":{"mode":"detect"}
+                "events":{"process":true,"network":true,"file":true,"registry":true,"security":true,"dll_and_driver_load":true,"dns":true,"credential_access":true},
+                "malware":{"mode":"detect","blocklist":true,"on_write_scan":true},
+                "ransomware":{"mode":"detect","supported":true},
+                "memory_protection":{"mode":"detect","supported":true},
+                "behavior_protection":{"mode":"detect","reputation_service":true,"supported":true},
+                "attack_surface_reduction":{"credential_hardening":{"enabled":true}},
+                "antivirus_registration":{"mode":"enabled","enabled":true}
               }}}}}]
           }' > /dev/null 2>&1 || true
+
+        echo "[*] Verifying Elastic Defend protections are enabled..."
+        sleep 5
+        POLICY_ID=$(curl -sf -u "$$AUTH" -H "kbn-xsrf: true" \
+          "$$KIBANA_URL/api/fleet/package_policies" 2>/dev/null \
+          | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+        if [ -n "$$POLICY_ID" ]; then
+          curl -sf -X PUT -u "$$AUTH" \
+            -H "Content-Type: application/json" -H "kbn-xsrf: true" \
+            "$$KIBANA_URL/api/fleet/package_policies/$$POLICY_ID" \
+            -d "{
+              \"name\":\"Elastic Defend\",
+              \"namespace\":\"default\",
+              \"policy_id\":\"default-policy\",
+              \"package\":{\"name\":\"endpoint\",\"version\":\"8.15.2\"},
+              \"inputs\":[{\"type\":\"endpoint\",\"enabled\":true,\"streams\":[],
+                \"config\":{\"policy\":{\"value\":{\"windows\":{
+                  \"events\":{\"process\":true,\"network\":true,\"file\":true,\"registry\":true,\"security\":true,\"dll_and_driver_load\":true,\"dns\":true,\"credential_access\":true},
+                  \"malware\":{\"mode\":\"detect\",\"blocklist\":true,\"on_write_scan\":true},
+                  \"ransomware\":{\"mode\":\"detect\",\"supported\":true},
+                  \"memory_protection\":{\"mode\":\"detect\",\"supported\":true},
+                  \"behavior_protection\":{\"mode\":\"detect\",\"reputation_service\":true,\"supported\":true},
+                  \"attack_surface_reduction\":{\"credential_hardening\":{\"enabled\":true}},
+                  \"antivirus_registration\":{\"mode\":\"enabled\",\"enabled\":true}
+                }}}}}]
+            }" > /dev/null 2>&1 && echo "[+] Elastic Defend protections confirmed" || echo "[!] Policy update skipped"
+        fi
 
         echo "[*] Installing prebuilt detection rules (retries up to 60s)..."
         for i in 1 2 3 4 5 6; do

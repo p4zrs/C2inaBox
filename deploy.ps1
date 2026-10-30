@@ -17,6 +17,10 @@
     Generate a default x64 beacon EXE after creating the listener.
 .PARAMETER PayloadDir
     Directory for generated payloads. Defaults to C:\Tools\Payloads.
+.PARAMETER EnrollAgent
+    Download and enroll Elastic Agent on this host after stack is up.
+.PARAMETER SkipEnroll
+    Skip Elastic Agent enrollment even if not already enrolled.
 #>
 [CmdletBinding()]
 param(
@@ -25,7 +29,9 @@ param(
     [switch]$Force,
     [switch]$NoListener,
     [switch]$GeneratePayload,
-    [string]$PayloadDir = "C:\Tools\Payloads"
+    [string]$PayloadDir = "C:\Tools\Payloads",
+    [switch]$EnrollAgent,
+    [switch]$SkipEnroll
 )
 
 $ErrorActionPreference = 'Stop'
@@ -149,6 +155,36 @@ if (-not $ElasticOnly -and -not $NoListener -and $adaptixReady) {
     & "$ScriptDir\setup-listener.ps1" @listenerArgs
 }
 
+# Auto-enroll Elastic Agent
+if (-not $SkipEnroll) {
+    $agentSvc = Get-Service -Name "Elastic Agent" -ErrorAction SilentlyContinue
+    if ($agentSvc) {
+        Write-Host "[*] Elastic Agent already installed (status: $($agentSvc.Status))" -ForegroundColor DarkGray
+    } elseif ($EnrollAgent -or (-not $ElasticOnly)) {
+        Write-Host ""
+        Write-Host "[*] Enrolling Elastic Agent on this host..." -ForegroundColor Yellow
+        Write-Host "    Waiting for Fleet Server and SIEM setup to finish..." -ForegroundColor DarkGray
+
+        $fleetReady = $false
+        for ($i = 1; $i -le 30; $i++) {
+            try {
+                $fleetHealth = Invoke-RestMethod -Uri "http://localhost:8220/api/status" `
+                    -TimeoutSec 3 -ErrorAction Stop -UseBasicParsing
+                $fleetReady = $true
+                break
+            } catch {}
+            Start-Sleep -Seconds 5
+        }
+
+        if ($fleetReady) {
+            & "$ScriptDir\enroll-agent.ps1"
+        } else {
+            Write-Host "[!] Fleet Server not reachable after 150s. Run enroll-agent.ps1 manually." -ForegroundColor Red
+        }
+    }
+}
+
+Write-Host ""
 Write-Host "[*] Use .\teardown.ps1 to stop everything." -ForegroundColor DarkGray
 
 Pop-Location
